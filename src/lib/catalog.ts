@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { listCategories } from "./content.functions";
 import cascos from "@/assets/cat-cascos.jpg";
 import casco2 from "@/assets/prod-casco2.jpg";
 import indumentaria from "@/assets/cat-indumentaria.jpg";
@@ -92,6 +93,9 @@ export function getStoredCategories(): CategoryItem[] {
   return defaultCategories;
 }
 
+// Photos that ship with the site for the classic categories (custom ones have none).
+const builtInCategoryImages: Record<string, string> = { cascos, maletas };
+
 export function saveStoredCategories(cats: CategoryItem[]): void {
   if (typeof window !== "undefined") {
     localStorage.setItem("moto_demo_categories_v2", JSON.stringify(cats));
@@ -103,12 +107,30 @@ export function useCategoriesList(): CategoryItem[] {
   const [cats, setCats] = useState<CategoryItem[]>(() => getStoredCategories());
 
   useEffect(() => {
+    let alive = true;
+    // The real list lives in the database (table categories) so every device
+    // sees the same filters. localStorage is only the fast first paint.
+    (async () => {
+      try {
+        const rows = await listCategories();
+        if (!alive || !rows || rows.length === 0) return;
+        const next = rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          ...(r.image_url ? { image: r.image_url } : builtInCategoryImages[r.id] ? { image: builtInCategoryImages[r.id] } : {}),
+        }));
+        saveStoredCategories(next);
+        setCats(next);
+      } catch {}
+    })();
+
     const handleUpdate = () => {
       setCats(getStoredCategories());
     };
     window.addEventListener("moto_categories_changed", handleUpdate);
     window.addEventListener("storage", handleUpdate);
     return () => {
+      alive = false;
       window.removeEventListener("moto_categories_changed", handleUpdate);
       window.removeEventListener("storage", handleUpdate);
     };

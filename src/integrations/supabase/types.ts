@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      categories: {
+        Row: {
+          id: string
+          image_url: string | null
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          image_url?: string | null
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          image_url?: string | null
+          name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       products: {
         Row: {
           category: string
@@ -52,6 +76,24 @@ export type Database = {
           price?: number
           ref?: string
           sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      site_config: {
+        Row: {
+          data: Json
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          data?: Json
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          data?: Json
+          id?: string
           updated_at?: string
         }
         Relationships: []

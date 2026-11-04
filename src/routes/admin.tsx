@@ -47,7 +47,8 @@ import {
   type ProductColor,
   type ProductRow,
 } from "@/lib/catalog";
-import { getSiteConfig, saveSiteConfig, type SiteConfig } from "@/lib/site-config";
+import { getSiteConfig, saveSiteConfig, mergeStoredConfig, toStorableConfig, type SiteConfig } from "@/lib/site-config";
+import { getSiteConfigData } from "@/lib/content.functions";
 import { Button } from "@/components/ui/button";
 
 const COLOR_PRESETS = [
@@ -251,6 +252,62 @@ const inputCls = "h-11 w-full border border-input bg-background px-3 outline-non
 // base de datos (trigger en supabase/schema.sql): cualquier otra cuenta que
 // lograra registrarse queda sin rol de admin y no puede editar nada.
 const ADMIN_EMAILS = ["jose13.jm446@gmail.com", "luisduran-1210@outlook.com"];
+
+/**
+ * Guarda el diseño de la tienda (portada, banners, outlet) en la tabla
+ * site_config. La RLS solo deja escribir a un admin con 2FA verificado.
+ */
+async function persistSiteConfig(config: SiteConfig): Promise<string | null> {
+  const { error } = await supabase
+    .from("site_config")
+    .upsert(
+      {
+        id: "default",
+        data: toStorableConfig(config) as unknown as Record<string, never>,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    );
+  return error ? error.message : null;
+}
+
+/**
+ * Sube una foto o video de portada/banner al almacén de Supabase (bucket
+ * product-images, carpeta site/) y devuelve su enlace público permanente.
+ */
+async function uploadSiteMedia(file: File, kind: string): Promise<string | null> {
+  const ext = file.name.split(".").pop() || "jpg";
+  const path = `site/${kind}-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage
+    .from("product-images")
+    .upload(path, file, { upsert: true, contentType: file.type });
+  if (error) {
+    alert(`No se pudo subir el archivo: ${error.message}`);
+    return null;
+  }
+  const base = String(import.meta.env["VITE_SUPABASE_URL"] || "").replace(/\/+$/, "");
+  return `${base}/storage/v1/object/public/product-images/${path}`;
+}
+
+/** Guarda la lista de categorías en la tabla categories (crea, actualiza y elimina). */
+async function persistCategories(cats: CategoryItem[]): Promise<string | null> {
+  const { error } = await supabase
+    .from("categories")
+    .upsert(
+      cats.map((c, i) => ({ id: c.id, name: c.name, image_url: null, sort_order: i })),
+      { onConflict: "id" },
+    );
+  if (error) return error.message;
+  const { error: del } = await supabase.from("categories").delete().not("id", "in", cats.map((c) => c.id));
+  return del ? del.message : null;
+}
+
+/** persistCategories con aviso al usuario (se usa tras cada cambio de categoría). */
+function reportCategoriesSave(cats: CategoryItem[]) {
+  persistCategories(cats).then((err) => {
+    if (err) alert("Las categorías se guardaron en este dispositivo, pero NO en el servidor: " + err);
+  });
+}
 
 function LoginForm({ onDone }: { onDone: () => void }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -867,6 +924,7 @@ function ProductEditor({
     if (!exists) {
       const updated = [...categoriesList, { id: slug, name: newCatName.trim() }];
       saveStoredCategories(updated);
+      reportCategoriesSave(updated);
     }
     setCategory(slug);
     setNewCatName("");
@@ -1191,6 +1249,7 @@ function CategoriesPanel({ categoriesList }: { categoriesList: CategoryItem[] })
 
     const updated = [...categoriesList, { id: slug, name: newCatName.trim() }];
     saveStoredCategories(updated);
+    reportCategoriesSave(updated);
     setNewCatName("");
     queryClient.invalidateQueries({ queryKey: ["products"] });
   };
@@ -1204,6 +1263,7 @@ function CategoriesPanel({ categoriesList }: { categoriesList: CategoryItem[] })
     if (!editingName.trim()) return;
     const updated = categoriesList.map((c) => (c.id === id ? { ...c, name: editingName.trim() } : c));
     saveStoredCategories(updated);
+    reportCategoriesSave(updated);
     setEditingId(null);
     queryClient.invalidateQueries({ queryKey: ["products"] });
   };
@@ -1212,6 +1272,7 @@ function CategoriesPanel({ categoriesList }: { categoriesList: CategoryItem[] })
     if (confirm(`¿Estás seguro de eliminar la categoría "${name}"?`)) {
       const updated = categoriesList.filter((c) => c.id !== id);
       saveStoredCategories(updated);
+      reportCategoriesSave(updated);
       queryClient.invalidateQueries({ queryKey: ["products"] });
     }
   };
@@ -1713,55 +1774,54 @@ function BannerMediaAdjuster({
 function DesignPanel() {
   const [config, setConfig] = useState<SiteConfig>(() => getSiteConfig());
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    saveSiteConfig(config);
+  // Al abrir el panel se carga el diseño real guardado en la base de datos,
+  // para editar siempre lo que los clientes están viendo.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const data = await getSiteConfigData();
+        if (alive && data) setConfig(mergeStoredConfig(data));
+      } catch {}
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    saveSiteConfig(config); // caché local: cambio inmediato en este dispositivo
+    const err = await persistSiteConfig(config);
+    setSaving(false);
+    if (err) {
+      alert("El diseño se guardó en este dispositivo, pero NO en el servidor (no se verá en otros teléfonos): " + err);
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
 
-  const uploadHeroImage = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      setConfig((prev) => ({
-        ...prev,
-        hero: { ...prev.hero, mediaType: "image", image: reader.result as string },
-      }));
-    };
-    reader.readAsDataURL(file);
+  const uploadHeroImage = async (file: File) => {
+    const url = await uploadSiteMedia(file, "hero");
+    if (url) setConfig((prev) => ({ ...prev, hero: { ...prev.hero, mediaType: "image", image: url } }));
   };
 
-  const uploadHeroVideo = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      setConfig((prev) => ({
-        ...prev,
-        hero: { ...prev.hero, mediaType: "video", videoUrl: reader.result as string },
-      }));
-    };
-    reader.readAsDataURL(file);
+  const uploadHeroVideo = async (file: File) => {
+    const url = await uploadSiteMedia(file, "hero");
+    if (url) setConfig((prev) => ({ ...prev, hero: { ...prev.hero, mediaType: "video", videoUrl: url } }));
   };
 
-  const uploadPromoImage = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      setConfig((prev) => ({
-        ...prev,
-        promoBanner: { ...prev.promoBanner, mediaType: "image", image: reader.result as string },
-      }));
-    };
-    reader.readAsDataURL(file);
+  const uploadPromoImage = async (file: File) => {
+    const url = await uploadSiteMedia(file, "promo");
+    if (url) setConfig((prev) => ({ ...prev, promoBanner: { ...prev.promoBanner, mediaType: "image", image: url } }));
   };
 
-  const uploadPromoVideo = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      setConfig((prev) => ({
-        ...prev,
-        promoBanner: { ...prev.promoBanner, mediaType: "video", videoUrl: reader.result as string },
-      }));
-    };
-    reader.readAsDataURL(file);
+  const uploadPromoVideo = async (file: File) => {
+    const url = await uploadSiteMedia(file, "promo");
+    if (url) setConfig((prev) => ({ ...prev, promoBanner: { ...prev.promoBanner, mediaType: "video", videoUrl: url } }));
   };
 
   return (
@@ -1775,9 +1835,9 @@ function DesignPanel() {
             Personaliza la imagen principal donde está la moto, los textos de la tienda, el banner de promociones y la sección de descuentos.
           </p>
         </div>
-        <Button onClick={handleSave} className="font-display uppercase tracking-wide gap-2">
-          {saved ? <Check className="h-4 w-4 text-green-300" /> : <Save className="h-4 w-4" />}
-          {saved ? "¡Cambios Guardados! ✓" : "Guardar Cambios"}
+        <Button onClick={handleSave} disabled={saving} className="font-display uppercase tracking-wide gap-2">
+          {saved ? <Check className="h-4 w-4 text-green-300" /> : saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {saved ? "¡Cambios Guardados! ✓" : saving ? "Guardando en el servidor…" : "Guardar Cambios"}
         </Button>
       </div>
 

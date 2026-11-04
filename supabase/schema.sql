@@ -153,3 +153,66 @@ insert into public.products (id, ref, name, price, old_price, category, image_ke
 ('c1', 'CS-1001', 'Casco Thunder R integral negro/rojo brillo', 759000, null, 'cascos', 'cascos', 7, '[{"name":"Negro / Rojo","hex":"#ef4444"},{"name":"Negro Mate","hex":"#18181b"}]'::jsonb),
 ('c2', 'CS-1002', 'Casco Track SV gris mate fluor', 559000, null, 'cascos', 'casco2', 8, '[{"name":"Gris Flúor","hex":"#84cc16"}]'::jsonb)
 on conflict (id) do nothing;
+
+
+-- 5. PORTADA / BANNERS (config del diseño, compartida entre dispositivos)
+create table if not exists public.site_config (
+  id text primary key default 'default',
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+grant select on public.site_config to anon, authenticated;
+grant insert, update on public.site_config to authenticated;
+alter table public.site_config enable row level security;
+
+create policy "Lectura publica de portada y banners"
+  on public.site_config for select to anon, authenticated using (true);
+
+create policy "Solo admin verificado crea portada y banners"
+  on public.site_config for insert to authenticated
+  with check (public.is_verified_admin());
+
+create policy "Solo admin verificado edita portada y banners"
+  on public.site_config for update to authenticated
+  using (public.is_verified_admin()) with check (public.is_verified_admin());
+
+
+-- 6. CATEGORÍAS DE LA TIENDA (compartidas entre dispositivos)
+create table if not exists public.categories (
+  id text primary key,
+  name text not null,
+  image_url text,
+  sort_order integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+grant select on public.categories to anon, authenticated;
+grant insert, update, delete on public.categories to authenticated;
+alter table public.categories enable row level security;
+
+create policy "Lectura publica de categorias"
+  on public.categories for select to anon, authenticated using (true);
+
+create policy "Solo admin verificado crea categorias"
+  on public.categories for insert to authenticated
+  with check (public.is_verified_admin());
+
+create policy "Solo admin verificado edita categorias"
+  on public.categories for update to authenticated
+  using (public.is_verified_admin()) with check (public.is_verified_admin());
+
+create policy "Solo admin verificado elimina categorias"
+  on public.categories for delete to authenticated
+  using (public.is_verified_admin());
+
+insert into public.categories (id, name, sort_order) values
+  ('espejos', 'Espejos', 1),
+  ('luces-led', 'Luces LED y Exploradoras', 2),
+  ('sliders-defensas', 'Sliders y Defensas', 3),
+  ('manubrios-maniguetas', 'Manubrios y Maniguetas', 4),
+  ('tapizados-cojines', 'Tapizados y Forros para Cojín', 5),
+  ('tornillerias-posapies', 'Tornillerías y Posapiés', 6),
+  ('cascos', 'Cascos y Protección', 7),
+  ('maletas', 'Maletas y Baúles', 8)
+on conflict (id) do nothing;

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import heroDefault from "@/assets/hero-moto.jpg";
 import bannerLimpiezaDefault from "@/assets/banner-limpieza.jpg";
+import { getSiteConfigData } from "./content.functions";
 
 export interface BannerMediaConfig {
   mediaType: "image" | "video";
@@ -113,42 +114,92 @@ export const defaultSiteConfig: SiteConfig = {
   },
 };
 
+/**
+ * Shared merge: stored partial config (from the database or the local cache)
+ * over the defaults. Empty-string image on hero/promo means "use the default
+ * image that ships with the site"; heavy base64 leftovers never survive.
+ */
+export function mergeStoredConfig(parsed: Record<string, unknown> | null | undefined): SiteConfig {
+  const p = (parsed || {}) as {
+    hero?: Record<string, unknown>;
+    promoBanner?: Record<string, unknown>;
+    outlet?: Record<string, unknown>;
+  };
+  const clean = (v: unknown): string | undefined =>
+    typeof v === "string" && v.startsWith("data:") ? "" : (v as string | undefined);
+  const hero = p.hero || {};
+  const promo = p.promoBanner || {};
+  const outlet = p.outlet || {};
+  return {
+    ...defaultSiteConfig,
+    hero: {
+      ...defaultSiteConfig.hero,
+      ...(hero as object),
+      image: clean(hero["image"]) || defaultSiteConfig.hero.image,
+      videoUrl: clean(hero["videoUrl"]),
+      posX: (hero["posX"] as number) ?? 50,
+      posY: (hero["posY"] as number) ?? 50,
+      scale: (hero["scale"] as number) ?? 100,
+      fit: (hero["fit"] as "cover" | "contain") ?? "cover",
+      mediaType: (hero["mediaType"] as "image" | "video") ?? (clean(hero["videoUrl"]) ? "video" : "image"),
+    },
+    promoBanner: {
+      ...defaultSiteConfig.promoBanner,
+      ...(promo as object),
+      image: clean(promo["image"]) || defaultSiteConfig.promoBanner.image,
+      videoUrl: clean(promo["videoUrl"]),
+      posX: (promo["posX"] as number) ?? 50,
+      posY: (promo["posY"] as number) ?? 50,
+      scale: (promo["scale"] as number) ?? 100,
+      fit: (promo["fit"] as "cover" | "contain") ?? "cover",
+      mediaType: (promo["mediaType"] as "image" | "video") ?? (clean(promo["videoUrl"]) ? "video" : "image"),
+    },
+    outlet: {
+      ...defaultSiteConfig.outlet,
+      ...(outlet as object),
+      image: clean(outlet["image"]),
+      videoUrl: clean(outlet["videoUrl"]),
+      posX: (outlet["posX"] as number) ?? 50,
+      posY: (outlet["posY"] as number) ?? 50,
+      scale: (outlet["scale"] as number) ?? 100,
+      fit: (outlet["fit"] as "cover" | "contain") ?? "cover",
+    },
+  };
+}
+
+/**
+ * Config ready to store in the database: default asset URLs (which change with
+ * every deploy) are replaced by "" so the site always uses the current ones.
+ */
+export function toStorableConfig(c: SiteConfig): SiteConfig {
+  const strip = (v: string | undefined, def: string | undefined) =>
+    v === def || (v && v.startsWith("data:")) ? "" : v;
+  return {
+    ...c,
+    hero: {
+      ...c.hero,
+      image: strip(c.hero.image, defaultSiteConfig.hero.image) ?? "",
+      videoUrl: strip(c.hero.videoUrl, undefined),
+    },
+    promoBanner: {
+      ...c.promoBanner,
+      image: strip(c.promoBanner.image, defaultSiteConfig.promoBanner.image) ?? "",
+      videoUrl: strip(c.promoBanner.videoUrl, undefined),
+    },
+    outlet: {
+      ...c.outlet,
+      image: strip(c.outlet.image, undefined),
+      videoUrl: strip(c.outlet.videoUrl, undefined),
+    },
+  };
+}
+
 export function getSiteConfig(): SiteConfig {
   if (typeof window !== "undefined") {
     const raw = localStorage.getItem("moto_site_config_v1");
     if (raw) {
       try {
-        const parsed = JSON.parse(raw);
-        return {
-          ...defaultSiteConfig,
-          ...parsed,
-          hero: {
-            ...defaultSiteConfig.hero,
-            ...(parsed.hero || {}),
-            posX: parsed.hero?.posX ?? 50,
-            posY: parsed.hero?.posY ?? 50,
-            scale: parsed.hero?.scale ?? 100,
-            fit: parsed.hero?.fit ?? "cover",
-            mediaType: parsed.hero?.mediaType ?? (parsed.hero?.videoUrl ? "video" : "image"),
-          },
-          promoBanner: {
-            ...defaultSiteConfig.promoBanner,
-            ...(parsed.promoBanner || {}),
-            posX: parsed.promoBanner?.posX ?? 50,
-            posY: parsed.promoBanner?.posY ?? 50,
-            scale: parsed.promoBanner?.scale ?? 100,
-            fit: parsed.promoBanner?.fit ?? "cover",
-            mediaType: parsed.promoBanner?.mediaType ?? (parsed.promoBanner?.videoUrl ? "video" : "image"),
-          },
-          outlet: {
-            ...defaultSiteConfig.outlet,
-            ...(parsed.outlet || {}),
-            posX: parsed.outlet?.posX ?? 50,
-            posY: parsed.outlet?.posY ?? 50,
-            scale: parsed.outlet?.scale ?? 100,
-            fit: parsed.outlet?.fit ?? "cover",
-          },
-        };
+        return mergeStoredConfig(JSON.parse(raw));
       } catch {}
     }
   }
@@ -166,12 +217,28 @@ export function useSiteConfig(): SiteConfig {
   const [config, setConfig] = useState<SiteConfig>(() => getSiteConfig());
 
   useEffect(() => {
+    let alive = true;
+    // The real design lives in the database (table site_config): every device
+    // shows what the admin saved. localStorage is only the fast first paint.
+    (async () => {
+      try {
+        const data = await getSiteConfigData();
+        if (!alive || !data) return;
+        const merged = mergeStoredConfig(data);
+        try {
+          localStorage.setItem("moto_site_config_v1", JSON.stringify(merged));
+        } catch {}
+        setConfig(merged);
+      } catch {}
+    })();
+
     const handleUpdate = () => {
       setConfig(getSiteConfig());
     };
     window.addEventListener("moto_site_config_changed", handleUpdate);
     window.addEventListener("storage", handleUpdate);
     return () => {
+      alive = false;
       window.removeEventListener("moto_site_config_changed", handleUpdate);
       window.removeEventListener("storage", handleUpdate);
     };

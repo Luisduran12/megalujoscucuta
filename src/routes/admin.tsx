@@ -315,12 +315,11 @@ function LoginForm({ onDone }: { onDone: () => void }) {
       return;
     }
 
-    // Registro: solo los dos correos autorizados de la tienda
+    // Registro: solo los correos autorizados de la tienda (la lista no se muestra
+    // en pantalla; el candado real es el trigger de la base de datos).
     if (!ADMIN_EMAILS.includes(cleanEmail)) {
       setBusy(false);
-      setMsg(
-        "Ese correo no está autorizado. Solo pueden registrarse los dos correos oficiales de la tienda: jose13.jm446@gmail.com y luisduran-1210@outlook.com."
-      );
+      setMsg("Ese correo no está autorizado para administrar la tienda.");
       setMsgType("error");
       return;
     }
@@ -382,7 +381,7 @@ function LoginForm({ onDone }: { onDone: () => void }) {
         </button>
       </div>
       <p className="mb-6 text-center text-[11px] text-muted-foreground">
-        Acceso exclusivo: jose13.jm446@gmail.com y luisduran-1210@outlook.com. Ningún otro correo puede registrarse.
+        Acceso exclusivo del administrador. Ningún otro correo puede registrarse.
       </p>
 
       <form onSubmit={submit} className="space-y-4">

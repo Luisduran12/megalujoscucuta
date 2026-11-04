@@ -26,7 +26,6 @@ import {
   Save,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   Tag,
   Trash2,
   Upload,
@@ -49,14 +48,6 @@ import {
   type ProductRow,
 } from "@/lib/catalog";
 import { getSiteConfig, saveSiteConfig, type SiteConfig } from "@/lib/site-config";
-import {
-  serverGetAdminStatus,
-  serverRegisterAdmin,
-  serverLoginAdmin,
-  serverGenerateTotp,
-  serverVerifyAndEnrollTotp,
-  serverVerifyTotpLogin,
-} from "@/lib/auth.functions";
 import { Button } from "@/components/ui/button";
 
 const COLOR_PRESETS = [
@@ -88,69 +79,62 @@ export const Route = createFileRoute("/admin")({
   component: AdminPage,
 });
 
-type Stage = "loading" | "login" | "enroll" | "verify" | "denied" | "panel";
+type Stage = "loading" | "login" | "enroll" | "verify" | "reset" | "denied" | "panel";
 type Tab = "products" | "categories" | "design";
 
 function AdminPage() {
   const [stage, setStage] = useState<Stage>("loading");
   const [session, setSession] = useState<Session | null>(null);
-  const [currentEmail, setCurrentEmail] = useState<string>("admin@megalujoscucuta.com");
-  const [isDemo, setIsDemo] = useState(false);
+  const [currentEmail, setCurrentEmail] = useState<string>("");
   const [tab, setTab] = useState<Tab>("products");
   const categoriesList = useCategoriesList();
 
+  // Every access decision comes from the real Supabase session:
+  // no localStorage token, no demo shortcut, no in-memory "admin" record.
   const evaluate = useCallback(async () => {
-    // 1. Verificación de sesión de administrador autenticado con 2FA
-    if (typeof window !== "undefined") {
-      const savedToken = localStorage.getItem("megalujos_admin_token");
-      const savedEmail = localStorage.getItem("megalujos_admin_email");
-      if (savedToken && savedEmail) {
-        setIsDemo(false);
-        setCurrentEmail(savedEmail);
-        setSession({ user: { email: savedEmail } } as unknown as Session);
-        setStage("panel");
-        return;
-      }
+    const { data: s } = await supabase.auth.getSession();
+    const sess = s.session;
 
-      if (localStorage.getItem("moto_admin_demo") === "true") {
-        setIsDemo(true);
-        setCurrentEmail("admin@motoruta.com");
-        setSession({ user: { email: "admin@motoruta.com" } } as unknown as Session);
-        setStage("panel");
-        return;
-      }
+    if (!sess) {
+      setSession(null);
+      return setStage("login");
     }
 
-    // 2. Verificación de Supabase si está disponible
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      const { data: s } = await supabase.auth.getSession();
-      setSession(s.session);
-      if (!userData.user) return setStage("login");
+    setSession(sess);
+    setCurrentEmail(sess.user.email || "");
 
-      setCurrentEmail(userData.user.email || "admin@megalujoscucuta.com");
+    // If we arrived through the "forgot password" email link, ask for the new password first
+    if ((sess.user as { recovery_session?: boolean }).recovery_session || sess.user.aud === "recover") {
+      return setStage("reset");
+    }
 
-      const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (aal?.currentLevel !== "aal2") {
-        const { data: factors } = await supabase.auth.mfa.listFactors();
-        const verified = factors?.totp?.length ?? 0;
-        return setStage(verified > 0 ? "verify" : "enroll");
-      }
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+    // aal2 = logged in with password + 2FA: verify the admin role in the database
+    if (aal?.currentLevel === "aal2") {
       const { data: roles } = await supabase
         .from("user_roles")
         .select("role")
-        .eq("user_id", userData.user.id)
+        .eq("user_id", sess.user.id)
         .eq("role", "admin");
-      setStage(roles && roles.length > 0 ? "panel" : "denied");
-    } catch {
-      setStage("login");
+      return setStage(roles && roles.length > 0 ? "panel" : "denied");
     }
+
+    // aal1 (password only): ask for the code if 2FA is enrolled; otherwise set it up
+    const { data: factors } = await supabase.auth.mfa.listFactors();
+    const verified = factors?.totp?.length ?? 0;
+    return setStage(verified > 0 ? "verify" : "enroll");
   }, []);
 
   useEffect(() => {
     evaluate();
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "MFA_CHALLENGE_VERIFIED") {
+      if (
+        event === "SIGNED_IN" ||
+        event === "SIGNED_OUT" ||
+        event === "PASSWORD_RECOVERY" ||
+        event === "MFA_CHALLENGE_VERIFIED"
+      ) {
         setTimeout(evaluate, 0);
       }
     });
@@ -158,34 +142,15 @@ function AdminPage() {
   }, [evaluate]);
 
   const signOut = async () => {
+    // Clean up keys left behind by the old demo version
     localStorage.removeItem("moto_admin_demo");
     localStorage.removeItem("megalujos_admin_token");
     localStorage.removeItem("megalujos_admin_email");
-    setIsDemo(false);
     try {
       await supabase.auth.signOut();
     } catch {}
     setSession(null);
     setStage("login");
-  };
-
-  const handleLoginSuccess = (email: string, needs2FA: boolean, is2FAEnrolled: boolean) => {
-    setCurrentEmail(email);
-    if (needs2FA) {
-      setStage(is2FAEnrolled ? "verify" : "enroll");
-    } else {
-      localStorage.setItem("megalujos_admin_token", "admin_tok_" + Date.now());
-      localStorage.setItem("megalujos_admin_email", email);
-      setSession({ user: { email } } as unknown as Session);
-      setStage("panel");
-    }
-  };
-
-  const handleAuthCompleted = (email: string) => {
-    localStorage.setItem("megalujos_admin_token", "admin_tok_" + Date.now());
-    localStorage.setItem("megalujos_admin_email", email);
-    setSession({ user: { email } } as unknown as Session);
-    setStage("panel");
   };
 
   return (
@@ -194,12 +159,7 @@ function AdminPage() {
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
           <div className="flex items-center gap-2 font-display text-lg uppercase tracking-wide">
             <ShieldCheck className="h-5 w-5 text-primary" /> Megalujos Cúcuta | Administración
-            {isDemo && (
-              <span className="ml-2 rounded bg-amber-500/20 px-2 py-0.5 text-xs text-amber-400 font-sans normal-case">
-                Modo Prueba Local
-              </span>
-            )}
-            {!isDemo && session?.user?.email && (
+            {stage === "panel" && session?.user?.email && (
               <span className="ml-2 rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-400 font-sans normal-case">
                 2FA Activo ({session.user.email})
               </span>
@@ -218,24 +178,10 @@ function AdminPage() {
 
       <div className="mx-auto max-w-6xl px-4 py-8">
         {stage === "loading" && <Loader2 className="mx-auto h-8 w-8 animate-spin" />}
-        {stage === "login" && (
-          <LoginForm
-            onDemoLogin={evaluate}
-            onLoginSuccess={handleLoginSuccess}
-          />
-        )}
-        {stage === "enroll" && (
-          <EnrollTotp
-            email={currentEmail}
-            onDone={() => handleAuthCompleted(currentEmail)}
-          />
-        )}
-        {stage === "verify" && (
-          <VerifyTotp
-            email={currentEmail}
-            onDone={() => handleAuthCompleted(currentEmail)}
-          />
-        )}
+        {stage === "login" && <LoginForm onDone={evaluate} />}
+        {stage === "enroll" && <EnrollTotp email={currentEmail} onDone={evaluate} />}
+        {stage === "verify" && <VerifyTotp email={currentEmail} onDone={evaluate} />}
+        {stage === "reset" && <ResetPasswordForm onDone={evaluate} />}
         {stage === "denied" && (
           <Card title="Sin acceso">
             <p className="text-sm text-muted-foreground">
@@ -280,12 +226,8 @@ function AdminPage() {
               </button>
             </div>
 
-            {tab === "products" && (
-              <ProductsPanel isDemo={isDemo} categoriesList={categoriesList} />
-            )}
-            {tab === "categories" && (
-              <CategoriesPanel isDemo={isDemo} categoriesList={categoriesList} />
-            )}
+            {tab === "products" && <ProductsPanel categoriesList={categoriesList} />}
+            {tab === "categories" && <CategoriesPanel categoriesList={categoriesList} />}
             {tab === "design" && <DesignPanel />}
           </div>
         )}
@@ -305,23 +247,40 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 const inputCls = "h-11 w-full border border-input bg-background px-3 outline-none focus:border-primary text-sm";
 
-function LoginForm({
-  onDemoLogin,
-  onLoginSuccess,
-}: {
-  onDemoLogin: () => void;
-  onLoginSuccess: (email: string, needs2FA: boolean, is2FAEnrolled: boolean) => void;
-}) {
+// Único acceso posible al panel: estos dos correos. La regla real la impone la
+// base de datos (trigger en supabase/schema.sql): cualquier otra cuenta que
+// lograra registrarse queda sin rol de admin y no puede editar nada.
+const ADMIN_EMAILS = ["jose13.jm446@gmail.com", "luisduran-1210@outlook.com"];
+
+function LoginForm({ onDone }: { onDone: () => void }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("admin@megalujoscucuta.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [msgType, setMsgType] = useState<"error" | "success">("error");
   const [busy, setBusy] = useState(false);
 
-  const handleDemo = () => {
-    localStorage.setItem("moto_admin_demo", "true");
-    onDemoLogin();
+  const askRecovery = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setMsg("Primero escribe tu correo arriba y luego pulsa el enlace de recuperación.");
+      setMsgType("error");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+      redirectTo: `${window.location.origin}/admin`,
+    });
+    setBusy(false);
+    if (error) {
+      setMsg(error.message);
+      setMsgType("error");
+    } else {
+      setMsg(
+        `Te enviamos un enlace para crear una nueva contraseña a ${cleanEmail}. Revisa tu bandeja de entrada (y la carpeta de spam) y ábrelo en este mismo navegador.`
+      );
+      setMsgType("success");
+    }
   };
 
   const submit = async (e: FormEvent) => {
@@ -331,81 +290,68 @@ function LoginForm({
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // Acceso de prueba rápida si coincide
-    if (cleanEmail === "admin@motoruta.com" && password === "admin1234") {
-      handleDemo();
+    if (mode === "signin") {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
       setBusy(false);
+      if (error) {
+        if (error.message.includes("Email not confirmed")) {
+          setMsg(
+            "Tu correo aún no está confirmado. Revisa tu bandeja de entrada (y la carpeta de spam), abre el enlace de confirmación que te enviamos y luego inicia sesión."
+          );
+        } else if (error.message.includes("Invalid login credentials")) {
+          setMsg(
+            "Correo o contraseña incorrectos. Si no la recuerdas, usa el enlace de '¿Olvidaste tu contraseña?'."
+          );
+        } else {
+          setMsg(error.message);
+        }
+        setMsgType("error");
+        return;
+      }
+      onDone();
       return;
     }
 
-    if (mode === "signin") {
-      try {
-        const res = await serverLoginAdmin({ data: { email: cleanEmail, password } });
-        if (res.success) {
-          if (res.isDemo) {
-            handleDemo();
-          } else {
-            onLoginSuccess(cleanEmail, Boolean(res.needs2FA), Boolean(res.is2FAEnrolled));
-          }
-          setBusy(false);
-          return;
-        }
-
-        // Si falla la verificación interna, intentar con Supabase
-        const { data: suData, error: suError } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-
-        if (!suError && suData.user) {
-          onLoginSuccess(cleanEmail, true, true);
-          setBusy(false);
-          return;
-        }
-
-        setMsg(res.error || suError?.message || "Correo o contraseña incorrectos.");
-        setMsgType("error");
-      } catch {
-        setMsg("Error al iniciar sesión. Verifica tus datos o usa la cuenta de prueba.");
-        setMsgType("error");
-      }
-    } else {
-      // Registro de cuenta de administrador
-      try {
-        const res = await serverRegisterAdmin({ data: { email: cleanEmail, password } });
-        if (!res.success) {
-          setMsg(res.error || "No se pudo registrar.");
-          setMsgType("error");
-          setBusy(false);
-          return;
-        }
-
-        // Intentar registrar en Supabase en paralelo
-        try {
-          await supabase.auth.signUp({
-            email: cleanEmail,
-            password,
-            options: { emailRedirectTo: `${window.location.origin}/admin` },
-          });
-        } catch {}
-
-        setMsg("¡Cuenta creada! Redirigiendo a configurar el doble paso...");
-        setMsgType("success");
-        setTimeout(() => {
-          onLoginSuccess(cleanEmail, true, false);
-        }, 800);
-      } catch {
-        setMsg("Error de conexión al registrar administrador.");
-        setMsgType("error");
-      }
+    // Registro: solo los dos correos autorizados de la tienda
+    if (!ADMIN_EMAILS.includes(cleanEmail)) {
+      setBusy(false);
+      setMsg(
+        "Ese correo no está autorizado. Solo pueden registrarse los dos correos oficiales de la tienda: jose13.jm446@gmail.com y luisduran-1210@outlook.com."
+      );
+      setMsgType("error");
+      return;
     }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password,
+      options: { emailRedirectTo: `${window.location.origin}/admin` },
+    });
     setBusy(false);
+    if (error) {
+      setMsg(error.message);
+      setMsgType("error");
+      return;
+    }
+    if (data.session) {
+      // Sin confirmación de correo exigida: pasar directo a configurar el 2FA
+      onDone();
+      return;
+    }
+    setMsg(
+      `Cuenta creada. Te enviamos un correo de confirmación a ${cleanEmail}: ábrelo (puede caer en spam) y luego inicia sesión con la misma contraseña.`
+    );
+    setMsgType("success");
+    setMode("signin");
   };
 
   return (
     <Card title="Panel Administrativo">
-      {/* Selector de modo: Iniciar Sesión / Crear Administrador */}
-      <div className="mb-6 grid grid-cols-2 gap-1 rounded bg-secondary p-1 border">
+      {/* Selector de modo: el registro solo acepta los dos correos autorizados */}
+      <div className="mb-2 grid grid-cols-2 gap-1 rounded bg-secondary p-1 border">
         <button
           type="button"
           onClick={() => {
@@ -435,25 +381,9 @@ function LoginForm({
           <UserPlus className="h-3.5 w-3.5" /> Crear Administrador
         </button>
       </div>
-
-      {/* Demo Credentials Alert */}
-      <div className="mb-5 rounded-md border border-primary/30 bg-primary/5 p-3.5 text-xs">
-        <div className="flex items-center justify-between font-semibold text-primary">
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5" /> Cuenta de prueba rápida:
-          </span>
-          <button
-            type="button"
-            onClick={handleDemo}
-            className="rounded bg-primary px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-primary-foreground hover:opacity-90"
-          >
-            Entrar directo
-          </button>
-        </div>
-        <div className="mt-1.5 text-muted-foreground">
-          <code>admin@motoruta.com</code> / <code>admin1234</code>
-        </div>
-      </div>
+      <p className="mb-6 text-center text-[11px] text-muted-foreground">
+        Acceso exclusivo: jose13.jm446@gmail.com y luisduran-1210@outlook.com. Ningún otro correo puede registrarse.
+      </p>
 
       <form onSubmit={submit} className="space-y-4">
         <div>
@@ -483,6 +413,17 @@ function LoginForm({
           />
         </div>
 
+        {mode === "signin" && (
+          <button
+            type="button"
+            onClick={askRecovery}
+            disabled={busy}
+            className="block text-xs text-primary hover:underline cursor-pointer"
+          >
+            ¿Olvidaste tu contraseña? Te enviamos un enlace de recuperación a tu correo
+          </button>
+        )}
+
         {msg && (
           <p
             className={`text-xs p-2 rounded ${
@@ -503,6 +444,7 @@ function LoginForm({
 }
 
 function EnrollTotp({ email, onDone }: { email: string; onDone: () => void }) {
+  const [factorId, setFactorId] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -513,67 +455,43 @@ function EnrollTotp({ email, onDone }: { email: string; onDone: () => void }) {
   useEffect(() => {
     (async () => {
       try {
-        // 1. Intentar con servidor interno (genera QR estándar para Google Authenticator)
-        const res = await serverGenerateTotp({ data: { email } });
-        if (res && res.qrCodeUrl && res.secret) {
-          setQr(res.qrCodeUrl);
-          setSecret(res.secret);
-          return;
-        }
-
-        // 2. Fallback a Supabase MFA si está disponible
+        // Limpia factores sin verificar y enrolla uno nuevo.
+        // Supabase genera el QR internamente (data URI): el secreto nunca sale del navegador.
         const { data: factors } = await supabase.auth.mfa.listFactors();
         for (const f of factors?.all ?? []) {
           if (f.status === "unverified") await supabase.auth.mfa.unenroll({ factorId: f.id });
         }
         const { data, error } = await supabase.auth.mfa.enroll({
           factorType: "totp",
-          friendlyName: `Megalujos Admin ${Date.now()}`,
+          friendlyName: "Megalujos Admin",
         });
         if (error) return setMsg(error.message);
+        if (!data) return setMsg("No se pudo crear el factor de 2FA. Intenta de nuevo.");
+        setFactorId(data.id);
         setQr(data.totp.qr_code);
         setSecret(data.totp.secret);
       } catch (e: any) {
         setMsg(e.message || "Error al generar código 2FA.");
       }
     })();
-  }, [email]);
+  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!secret) return;
+    if (!factorId) return;
     setBusy(true);
     setMsg(null);
 
-    try {
-      // 1. Verificación en el backend interno
-      const res = await serverVerifyAndEnrollTotp({ data: { email, secret, code: code.trim() } });
-      if (res.success) {
-        setBusy(false);
-        onDone();
-        return;
-      }
-
-      // 2. Fallback a Supabase MFA
-      const { data: factors } = await supabase.auth.mfa.listFactors();
-      const factor = factors?.totp?.[0];
-      if (factor) {
-        const { error } = await supabase.auth.mfa.challengeAndVerify({
-          factorId: factor.id,
-          code: code.trim(),
-        });
-        if (!error) {
-          setBusy(false);
-          onDone();
-          return;
-        }
-      }
-
-      setMsg(res.error || "Código incorrecto. Revisa los 6 dígitos en tu app.");
-    } catch {
-      setMsg("Error al validar el código 2FA.");
-    }
+    const { error } = await supabase.auth.mfa.challengeAndVerify({
+      factorId,
+      code: code.trim(),
+    });
     setBusy(false);
+    if (error) {
+      setMsg("Código incorrecto. Revisa los 6 dígitos en tu app de autenticación.");
+      return;
+    }
+    onDone();
   };
 
   const copySecret = () => {
@@ -659,35 +577,24 @@ function VerifyTotp({ email, onDone }: { email: string; onDone: () => void }) {
     setBusy(true);
     setMsg(null);
 
-    try {
-      // 1. Verificación interna con algoritmo RFC 6238 TOTP
-      const res = await serverVerifyTotpLogin({ data: { email, code: code.trim() } });
-      if (res.success) {
-        setBusy(false);
-        onDone();
-        return;
-      }
-
-      // 2. Fallback a Supabase MFA
-      const { data: factors } = await supabase.auth.mfa.listFactors();
-      const factor = factors?.totp?.[0];
-      if (factor) {
-        const { error } = await supabase.auth.mfa.challengeAndVerify({
-          factorId: factor.id,
-          code: code.trim(),
-        });
-        if (!error) {
-          setBusy(false);
-          onDone();
-          return;
-        }
-      }
-
-      setMsg(res.error || "Código incorrecto. Revisa el código actual en tu aplicación.");
-    } catch {
-      setMsg("Error al verificar el código.");
+    const { data: factors } = await supabase.auth.mfa.listFactors();
+    const factor = factors?.totp?.[0];
+    if (!factor) {
+      setBusy(false);
+      setMsg("No se encontró tu factor de 2FA en esta cuenta. Cierra sesión e inténtalo de nuevo.");
+      return;
     }
+
+    const { error } = await supabase.auth.mfa.challengeAndVerify({
+      factorId: factor.id,
+      code: code.trim(),
+    });
     setBusy(false);
+    if (error) {
+      setMsg("Código incorrecto. Revisa el código actual (6 dígitos) en tu aplicación de autenticación.");
+      return;
+    }
+    onDone();
   };
 
   return (
@@ -715,29 +622,89 @@ function VerifyTotp({ email, onDone }: { email: string; onDone: () => void }) {
   );
 }
 
-function ProductsPanel({ isDemo, categoriesList }: { isDemo: boolean; categoriesList: CategoryItem[] }) {
+/**
+ * Etapa que aparece al abrir el ENLACE DE RECUPERACIÓN enviado por correo.
+ * Define la nueva contraseña y cierra la sesión de recuperación para volver al login normal.
+ */
+function ResetPasswordForm({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (password.length < 8) {
+      setMsg("La nueva contraseña debe tener mínimo 8 caracteres.");
+      return;
+    }
+    if (password !== confirm) {
+      setMsg("Las contraseñas no coinciden.");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      setBusy(false);
+      setMsg(error.message);
+      return;
+    }
+    // La sesión de recuperación es de un solo uso: se cierra y se vuelve al login normal (con 2FA)
+    await supabase.auth.signOut();
+    setBusy(false);
+    onDone();
+  };
+
+  return (
+    <Card title="Crea tu nueva contraseña">
+      <p className="mb-4 text-xs text-muted-foreground">
+        Entraste desde el enlace de recuperación que te enviamos por correo. Define una nueva contraseña;
+        luego inicia sesión con ella en el panel.
+      </p>
+      <form onSubmit={submit} className="space-y-4">
+        <label className="text-xs font-medium block">
+          Nueva contraseña
+          <input
+            className={inputCls}
+            type="password"
+            required
+            minLength={8}
+            placeholder="Mínimo 8 caracteres"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+          />
+        </label>
+        <label className="text-xs font-medium block">
+          Repite la nueva contraseña
+          <input
+            className={inputCls}
+            type="password"
+            required
+            minLength={8}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+          />
+        </label>
+        {msg && <p className="text-xs text-destructive">{msg}</p>}
+        <Button type="submit" disabled={busy} className="w-full font-display uppercase tracking-wide gap-2">
+          {busy && <Loader2 className="h-4 w-4 animate-spin" />} Guardar nueva contraseña
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+function ProductsPanel({ categoriesList }: { categoriesList: CategoryItem[] }) {
   const [rows, setRows] = useState<ProductRow[] | null>(null);
   const [q, setQ] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("todos");
   const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
-    if (isDemo || localStorage.getItem("moto_admin_demo") === "true") {
-      const stored = localStorage.getItem("moto_demo_products_v3");
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          setRows(parsed);
-          queryClient.setQueryData(["products"], parsed);
-          return;
-        } catch {}
-      }
-      setRows(fallbackProducts);
-      localStorage.setItem("moto_demo_products_v3", JSON.stringify(fallbackProducts));
-      queryClient.setQueryData(["products"], fallbackProducts);
-      return;
-    }
-
     try {
       const { data, error } = await supabase.from("products").select("*").order("sort_order");
       if (error || !data) {
@@ -748,7 +715,7 @@ function ProductsPanel({ isDemo, categoriesList }: { isDemo: boolean; categories
     } catch {
       setRows(fallbackProducts);
     }
-  }, [isDemo, queryClient]);
+  }, [queryClient]);
 
   useEffect(() => {
     load();
@@ -771,15 +738,6 @@ function ProductsPanel({ isDemo, categoriesList }: { isDemo: boolean; categories
       sort_order: maxOrder + 1,
       colors: [],
     };
-
-    if (isDemo || localStorage.getItem("moto_admin_demo") === "true") {
-      const updated = [newProd, ...(rows ?? [])];
-      setRows(updated);
-      localStorage.setItem("moto_demo_products_v3", JSON.stringify(updated));
-      queryClient.setQueryData(["products"], updated);
-      refreshStore();
-      return;
-    }
 
     const { error } = await supabase.from("products").insert({
       name: newProd.name,
@@ -808,9 +766,7 @@ function ProductsPanel({ isDemo, categoriesList }: { isDemo: boolean; categories
         <div>
           <h1 className="text-4xl font-bold">Catálogo de Productos</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {isDemo
-              ? "Modo demo: los cambios que hagas se guardan localmente y se reflejan al instante en la tienda."
-              : "Cambia nombre, precio, categoría o foto y presiona Guardar. Los cambios se ven en la tienda al instante."}
+            Cambia nombre, precio, categoría, colores o foto y presiona Guardar. Los cambios se ven en la tienda al instante.
           </p>
         </div>
         <Button onClick={addProduct} className="font-display uppercase tracking-wide gap-2">
@@ -849,7 +805,6 @@ function ProductsPanel({ isDemo, categoriesList }: { isDemo: boolean; categories
             <ProductEditor
               key={r.id}
               row={r}
-              isDemo={isDemo}
               categoriesList={categoriesList}
               onSaved={() => {
                 load();
@@ -865,12 +820,10 @@ function ProductsPanel({ isDemo, categoriesList }: { isDemo: boolean; categories
 
 function ProductEditor({
   row,
-  isDemo,
   categoriesList,
   onSaved,
 }: {
   row: ProductRow;
-  isDemo: boolean;
   categoriesList: CategoryItem[];
   onSaved: () => void;
 }) {
@@ -952,32 +905,9 @@ function ProductEditor({
     if (!name.trim()) return setStatus("El nombre no puede estar vacío.");
     setBusy(true);
 
-    if (isDemo || localStorage.getItem("moto_admin_demo") === "true") {
-      const stored = localStorage.getItem("moto_demo_products_v3");
-      let list: ProductRow[] = stored ? JSON.parse(stored) : fallbackProducts;
-      list = list.map((item) =>
-        item.id === row.id
-          ? {
-              ...item,
-              name: name.trim(),
-              ref: ref.trim(),
-              price: p,
-              old_price: op,
-              category,
-              colors,
-            }
-          : item
-      );
-      localStorage.setItem("moto_demo_products_v3", JSON.stringify(list));
-      setBusy(false);
-      setStatus("Guardado ✓");
-      onSaved();
-      return;
-    }
-
     const { error } = await supabase
       .from("products")
-      .update({ name: name.trim(), ref: ref.trim(), price: p, old_price: op, category })
+      .update({ name: name.trim(), ref: ref.trim(), price: p, old_price: op, category, colors })
       .eq("id", row.id);
     setBusy(false);
     if (error) return setStatus("Error: " + error.message);
@@ -988,24 +918,6 @@ function ProductEditor({
   const upload = async (file: File) => {
     setBusy(true);
     setStatus("Subiendo foto...");
-
-    if (isDemo || localStorage.getItem("moto_admin_demo") === "true") {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        const stored = localStorage.getItem("moto_demo_products_v3");
-        let list: ProductRow[] = stored ? JSON.parse(stored) : fallbackProducts;
-        list = list.map((item) =>
-          item.id === row.id ? { ...item, image_url: dataUrl, image_key: null } : item
-        );
-        localStorage.setItem("moto_demo_products_v3", JSON.stringify(list));
-        setBusy(false);
-        setStatus("Foto actualizada ✓");
-        onSaved();
-      };
-      reader.readAsDataURL(file);
-      return;
-    }
 
     const ext = file.name.split(".").pop() || "jpg";
     const path = `${row.id}/${Date.now()}.${ext}`;
@@ -1027,17 +939,6 @@ function ProductEditor({
   };
 
   const useBuiltIn = async (key: string) => {
-    if (isDemo || localStorage.getItem("moto_admin_demo") === "true") {
-      const stored = localStorage.getItem("moto_demo_products_v3");
-      let list: ProductRow[] = stored ? JSON.parse(stored) : fallbackProducts;
-      list = list.map((item) =>
-        item.id === row.id ? { ...item, image_key: key, image_url: null } : item
-      );
-      localStorage.setItem("moto_demo_products_v3", JSON.stringify(list));
-      onSaved();
-      return;
-    }
-
     const { error } = await supabase.from("products").update({ image_key: key, image_url: null }).eq("id", row.id);
     if (error) return setStatus("Error: " + error.message);
     onSaved();
@@ -1045,15 +946,6 @@ function ProductEditor({
 
   const remove = async () => {
     if (!confirm(`¿Eliminar "${row.name}"?`)) return;
-
-    if (isDemo || localStorage.getItem("moto_admin_demo") === "true") {
-      const stored = localStorage.getItem("moto_demo_products_v3");
-      let list: ProductRow[] = stored ? JSON.parse(stored) : fallbackProducts;
-      list = list.filter((item) => item.id !== row.id);
-      localStorage.setItem("moto_demo_products_v3", JSON.stringify(list));
-      onSaved();
-      return;
-    }
 
     const { error } = await supabase.from("products").delete().eq("id", row.id);
     if (error) return setStatus("Error: " + error.message);
@@ -1276,7 +1168,7 @@ function ProductEditor({
   );
 }
 
-function CategoriesPanel({ isDemo, categoriesList }: { isDemo: boolean; categoriesList: CategoryItem[] }) {
+function CategoriesPanel({ categoriesList }: { categoriesList: CategoryItem[] }) {
   const [newCatName, setNewCatName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");

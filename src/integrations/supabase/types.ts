@@ -17,6 +17,7 @@ export type Database = {
       products: {
         Row: {
           category: string
+          colors: unknown
           id: string
           image_key: string | null
           image_url: string | null
@@ -29,6 +30,7 @@ export type Database = {
         }
         Insert: {
           category: string
+          colors?: unknown
           id?: string
           image_key?: string | null
           image_url?: string | null
@@ -41,6 +43,7 @@ export type Database = {
         }
         Update: {
           category?: string
+          colors?: unknown
           id?: string
           image_key?: string | null
           image_url?: string | null

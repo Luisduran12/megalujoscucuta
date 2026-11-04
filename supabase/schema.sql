@@ -55,13 +55,16 @@ grant execute on function public.admin_exists() to anon, authenticated;
 grant execute on function public.is_verified_admin() to authenticated;
 grant execute on function public.has_role(uuid, public.app_role) to authenticated;
 
--- Trigger: La PRIMERA persona que se registre en la tienda se convierte en Administrador
-create or replace function public.assign_first_admin()
+-- Trigger: SOLO los dos correos autorizados de la tienda pueden ser Administradores.
+-- Cualquier otro correo que intente registrarse queda sin rol: el panel le muestra
+-- "Acceso restringido" y la base de datos le niega toda escritura (RLS).
+create or replace function public.assign_admin_by_allowlist()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  perform pg_advisory_xact_lock(424242);
-  if not exists (select 1 from public.user_roles where role = 'admin') then
-    insert into public.user_roles (user_id, role) values (new.id, 'admin');
+  if new.email is not null
+     and lower(new.email) in ('jose13.jm446@gmail.com', 'luisduran-1210@outlook.com') then
+    insert into public.user_roles (user_id, role) values (new.id, 'admin')
+    on conflict (user_id, role) do nothing;
   end if;
   return new;
 end;
@@ -69,7 +72,7 @@ $$;
 
 drop trigger if exists on_auth_user_created_assign_admin on auth.users;
 create trigger on_auth_user_created_assign_admin
-after insert on auth.users for each row execute function public.assign_first_admin();
+after insert on auth.users for each row execute function public.assign_admin_by_allowlist();
 
 
 -- 2. TABLA DE PRODUCTOS

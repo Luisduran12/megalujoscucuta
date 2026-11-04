@@ -26,7 +26,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(async () =
     });
     const { data, error } = await client
       .from("products")
-      .select("id, ref, name, price, old_price, category, image_key, image_url, sort_order")
+      .select("id, ref, name, price, old_price, category, image_key, image_url, sort_order, colors")
       .order("sort_order", { ascending: true });
 
     if (error || !data) {

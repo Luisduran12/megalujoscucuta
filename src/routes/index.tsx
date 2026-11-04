@@ -40,15 +40,38 @@ function Index() {
 
   return (
     <>
-      {/* Hero con Imagen de fondo y textos editables */}
+      {/* Hero con Imagen/Video de fondo y ajuste manual de resolución/posición */}
       <section className="relative -mt-px flex min-h-[80vh] items-end overflow-hidden bg-ink text-ink-foreground">
-        <img
-          src={config.hero.image || hero}
-          alt={config.hero.title}
-          width={1920}
-          height={1088}
-          className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300"
-        />
+        {config.hero.mediaType === "video" && config.hero.videoUrl ? (
+          <video
+            src={config.hero.videoUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 h-full w-full pointer-events-none transition-all duration-300"
+            style={{
+              objectFit: config.hero.fit || "cover",
+              objectPosition: `${config.hero.posX ?? 50}% ${config.hero.posY ?? 50}%`,
+              transform: `scale(${(config.hero.scale ?? 100) / 100})`,
+              transformOrigin: `${config.hero.posX ?? 50}% ${config.hero.posY ?? 50}%`,
+            }}
+          />
+        ) : (
+          <img
+            src={config.hero.image || hero}
+            alt={config.hero.title}
+            width={1920}
+            height={1088}
+            className="absolute inset-0 h-full w-full transition-all duration-300"
+            style={{
+              objectFit: config.hero.fit || "cover",
+              objectPosition: `${config.hero.posX ?? 50}% ${config.hero.posY ?? 50}%`,
+              transform: `scale(${(config.hero.scale ?? 100) / 100})`,
+              transformOrigin: `${config.hero.posX ?? 50}% ${config.hero.posY ?? 50}%`,
+            }}
+          />
+        )}
         <div className="absolute inset-0 bg-hero-overlay" />
         <div className="absolute inset-0 bg-bottom-overlay" />
         <div className="relative mx-auto w-full max-w-7xl px-4 pb-14 lg:px-8">
@@ -178,16 +201,39 @@ function Index() {
         </div>
       </section>
 
-      {/* Banner Intermedio Promocional (Limpia, lubrica, protege) Editable */}
+      {/* Banner Intermedio Promocional (Limpia, lubrica, protege) con Imagen/Video y Ajuste Manual */}
       <section className="relative overflow-hidden bg-ink text-ink-foreground">
-        <img
-          src={config.promoBanner.image || bannerLimpieza}
-          alt={config.promoBanner.highlight}
-          loading="lazy"
-          width={1920}
-          height={800}
-          className="h-[420px] w-full object-cover object-left opacity-90 transition-opacity"
-        />
+        {config.promoBanner.mediaType === "video" && config.promoBanner.videoUrl ? (
+          <video
+            src={config.promoBanner.videoUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="h-[420px] w-full pointer-events-none transition-all duration-300"
+            style={{
+              objectFit: config.promoBanner.fit || "cover",
+              objectPosition: `${config.promoBanner.posX ?? 50}% ${config.promoBanner.posY ?? 50}%`,
+              transform: `scale(${(config.promoBanner.scale ?? 100) / 100})`,
+              transformOrigin: `${config.promoBanner.posX ?? 50}% ${config.promoBanner.posY ?? 50}%`,
+            }}
+          />
+        ) : (
+          <img
+            src={config.promoBanner.image || bannerLimpieza}
+            alt={config.promoBanner.highlight}
+            loading="lazy"
+            width={1920}
+            height={800}
+            className="h-[420px] w-full transition-all duration-300 opacity-90"
+            style={{
+              objectFit: config.promoBanner.fit || "cover",
+              objectPosition: `${config.promoBanner.posX ?? 50}% ${config.promoBanner.posY ?? 50}%`,
+              transform: `scale(${(config.promoBanner.scale ?? 100) / 100})`,
+              transformOrigin: `${config.promoBanner.posX ?? 50}% ${config.promoBanner.posY ?? 50}%`,
+            }}
+          />
+        )}
         <div className="absolute inset-0 bg-hero-overlay" />
         <div className="absolute inset-0 flex items-center justify-end">
           <div className="mx-auto w-full max-w-7xl px-4 text-right lg:px-8">

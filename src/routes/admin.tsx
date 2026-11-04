@@ -3,18 +3,26 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   Edit2,
+  Film,
   Image,
   KeyRound,
   Layers,
   LayoutTemplate,
   Loader2,
   LogOut,
+  Maximize2,
+  Move,
   Package,
   Palette,
   Percent,
   Plus,
   QrCode,
+  RotateCcw,
   Save,
   ShieldAlert,
   ShieldCheck,
@@ -23,7 +31,9 @@ import {
   Trash2,
   Upload,
   UserPlus,
+  Video,
   X,
+  ZoomIn,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
@@ -1421,6 +1431,394 @@ function CategoriesPanel({ isDemo, categoriesList }: { isDemo: boolean; categori
   );
 }
 
+function BannerMediaAdjuster({
+  label,
+  mediaType,
+  image,
+  videoUrl,
+  posX,
+  posY,
+  scale,
+  fit,
+  onChange,
+  onUploadImage,
+  onUploadVideo,
+}: {
+  label: string;
+  mediaType: "image" | "video";
+  image: string;
+  videoUrl?: string | undefined;
+  posX: number;
+  posY: number;
+  scale: number;
+  fit: "cover" | "contain";
+  onChange: (updates: {
+    mediaType?: "image" | "video" | undefined;
+    image?: string | undefined;
+    videoUrl?: string | undefined;
+    posX?: number | undefined;
+    posY?: number | undefined;
+    scale?: number | undefined;
+    fit?: "cover" | "contain" | undefined;
+  }) => void;
+  onUploadImage: (file: File) => void;
+  onUploadVideo: (file: File) => void;
+}) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ clientX: 0, clientY: 0, startPosX: posX, startPosY: posY });
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setIsDragging(true);
+    setDragStart({
+      clientX: e.clientX,
+      clientY: e.clientY,
+      startPosX: posX ?? 50,
+      startPosY: posY ?? 50,
+    });
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    const deltaX = e.clientX - dragStart.clientX;
+    const deltaY = e.clientY - dragStart.clientY;
+    // Arrastrar a la izquierda revela el lado derecho y viceversa
+    const newX = Math.min(100, Math.max(0, dragStart.startPosX - deltaX * 0.35));
+    const newY = Math.min(100, Math.max(0, dragStart.startPosY - deltaY * 0.35));
+    onChange({ posX: Math.round(newX), posY: Math.round(newY) });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    setIsDragging(false);
+  };
+
+  const resetPosition = () => {
+    onChange({ posX: 50, posY: 50, scale: 100 });
+  };
+
+  return (
+    <div className="space-y-4 rounded border border-border/80 bg-muted/20 p-4">
+      {/* Selector de Tipo: Imagen o Video */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+        <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+          {label}
+        </span>
+        <div className="flex rounded border bg-background p-0.5">
+          <button
+            type="button"
+            onClick={() => onChange({ mediaType: "image" })}
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded transition-colors ${
+              mediaType === "image"
+                ? "bg-primary text-primary-foreground shadow"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Image className="h-3.5 w-3.5" /> Imagen
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange({ mediaType: "video" })}
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded transition-colors ${
+              mediaType === "video"
+                ? "bg-primary text-primary-foreground shadow"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Video className="h-3.5 w-3.5" /> Video
+          </button>
+        </div>
+      </div>
+
+      {/* Recuadro de Vista Previa Interactivo con Arrastre Manual */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Move className="h-3 w-3 text-primary" />
+            Haz clic y <strong>arrastra la imagen/video</strong> para cuadrar la posición
+          </span>
+          <span className="font-mono text-foreground font-semibold">
+            X: {posX}% | Y: {posY}% | Zoom: {scale}%
+          </span>
+        </div>
+
+        <div
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          className={`relative aspect-video w-full overflow-hidden rounded border bg-ink select-none ${
+            isDragging ? "cursor-grabbing" : "cursor-grab"
+          }`}
+          title="Arrastra para mover la imagen o video en cualquier dirección"
+        >
+          {mediaType === "video" && videoUrl ? (
+            <video
+              src={videoUrl}
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="pointer-events-none h-full w-full"
+              style={{
+                objectFit: fit,
+                objectPosition: `${posX}% ${posY}%`,
+                transform: `scale(${scale / 100})`,
+                transformOrigin: `${posX}% ${posY}%`,
+              }}
+            />
+          ) : (
+            <img
+              src={image}
+              alt="Vista previa de encuadre"
+              className="pointer-events-none h-full w-full"
+              style={{
+                objectFit: fit,
+                objectPosition: `${posX}% ${posY}%`,
+                transform: `scale(${scale / 100})`,
+                transformOrigin: `${posX}% ${posY}%`,
+              }}
+            />
+          )}
+
+          {/* Mira o cruz central tenue para facilitar el encuadre */}
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-30">
+            <div className="h-4 w-4 rounded-full border border-white" />
+          </div>
+
+          <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-ink/80 px-2 py-0.5 text-[10px] text-white">
+            {fit === "cover" ? "Ajuste: Llenar pantalla" : "Ajuste: Completo"}
+          </div>
+        </div>
+      </div>
+
+      {/* Subida o selección de archivo */}
+      {mediaType === "video" ? (
+        <div className="space-y-2 border-t pt-3">
+          <label className="text-xs font-medium block">
+            URL del Video (MP4 / WebM / Enlace directo)
+            <input
+              className={inputCls + " mt-1"}
+              placeholder="https://servidor.com/video-moto.mp4"
+              value={videoUrl || ""}
+              onChange={(e) => onChange({ videoUrl: e.target.value })}
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex cursor-pointer items-center justify-center gap-1.5 border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors rounded">
+              <Upload className="h-3.5 w-3.5" /> Subir archivo de video (.mp4)
+              <input
+                type="file"
+                accept="video/mp4,video/webm,video/*"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && onUploadVideo(e.target.files[0])}
+              />
+            </label>
+
+            {/* Videos de muestra rápida */}
+            <span className="text-[11px] text-muted-foreground">Probar demo:</span>
+            <button
+              type="button"
+              onClick={() =>
+                onChange({
+                  videoUrl:
+                    "https://assets.mixkit.co/videos/preview/mixkit-motorcyclist-racing-on-a-track-40763-large.mp4",
+                })
+              }
+              className="text-[11px] underline text-primary hover:text-primary/80"
+            >
+              Pista de carreras
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChange({
+                  videoUrl:
+                    "https://assets.mixkit.co/videos/preview/mixkit-motorcycle-rider-on-a-road-42617-large.mp4",
+                })
+              }
+              className="text-[11px] underline text-primary hover:text-primary/80"
+            >
+              Carretera
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2 border-t pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex cursor-pointer items-center justify-center gap-1.5 border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors rounded">
+              <Upload className="h-3.5 w-3.5" /> Subir foto desde el equipo
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && onUploadImage(e.target.files[0])}
+              />
+            </label>
+            <select
+              className="border border-input bg-background px-2 py-1.5 text-xs rounded"
+              value=""
+              onChange={(e) => e.target.value && onChange({ image: builtInImages[e.target.value] || image })}
+            >
+              <option value="">O elegir foto existente del sitio…</option>
+              {Object.keys(builtInImages).map((k) => (
+                <option key={k} value={k}>
+                  Foto: {k}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label className="text-xs font-medium block">
+            O escribe la URL de una imagen en internet
+            <input
+              className={inputCls + " mt-1"}
+              placeholder="https://..."
+              value={image.startsWith("data:") ? "(Imagen subida en base64)" : image}
+              onChange={(e) => !e.target.value.startsWith("(") && onChange({ image: e.target.value })}
+            />
+          </label>
+        </div>
+      )}
+
+      {/* Controles de Encuadre Manual: Deslizar a los lados, arriba, abajo y Zoom */}
+      <div className="border-t pt-3 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+            Ajustes de Encuadre Manual
+          </span>
+          <button
+            type="button"
+            onClick={resetPosition}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary font-medium"
+          >
+            <RotateCcw className="h-3 w-3" /> Reestablecer al centro
+          </button>
+        </div>
+
+        {/* 1. Mover Horizontalmente (A un lado / Al otro) */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground flex items-center gap-1">
+              <Move className="h-3 w-3" /> Mover Horizontalmente (Lados):
+            </span>
+            <span className="font-mono text-foreground font-semibold">{posX}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={posX}
+            onChange={(e) => onChange({ posX: Number(e.target.value) })}
+            className="w-full accent-primary cursor-pointer"
+          />
+          <div className="flex justify-between gap-1 text-[10px]">
+            <button
+              type="button"
+              onClick={() => onChange({ posX: 0 })}
+              className="rounded border px-2 py-0.5 hover:bg-muted"
+            >
+              ⬅ Izquierda (0%)
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ posX: 50 })}
+              className="rounded border px-2 py-0.5 hover:bg-muted font-bold text-primary"
+            >
+              🎯 Centro (50%)
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ posX: 100 })}
+              className="rounded border px-2 py-0.5 hover:bg-muted"
+            >
+              Derecha (100%) ➡
+            </button>
+          </div>
+        </div>
+
+        {/* 2. Mover Verticalmente (Arriba / Abajo) */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground flex items-center gap-1">
+              <Move className="h-3 w-3" /> Mover Verticalmente (Arriba / Abajo):
+            </span>
+            <span className="font-mono text-foreground font-semibold">{posY}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={posY}
+            onChange={(e) => onChange({ posY: Number(e.target.value) })}
+            className="w-full accent-primary cursor-pointer"
+          />
+          <div className="flex justify-between gap-1 text-[10px]">
+            <button
+              type="button"
+              onClick={() => onChange({ posY: 0 })}
+              className="rounded border px-2 py-0.5 hover:bg-muted"
+            >
+              ⬆ Arriba (0%)
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ posY: 50 })}
+              className="rounded border px-2 py-0.5 hover:bg-muted font-bold text-primary"
+            >
+              🎯 Centro (50%)
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ posY: 100 })}
+              className="rounded border px-2 py-0.5 hover:bg-muted"
+            >
+              Abajo (100%) ⬇
+            </button>
+          </div>
+        </div>
+
+        {/* 3. Escala / Zoom y Modo de Ajuste a la Resolución */}
+        <div className="grid gap-3 sm:grid-cols-2 pt-1">
+          <div>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <span className="text-muted-foreground flex items-center gap-1">
+                <ZoomIn className="h-3 w-3" /> Zoom / Tamaño:
+              </span>
+              <span className="font-mono text-foreground font-semibold">{scale}%</span>
+            </div>
+            <input
+              type="range"
+              min={100}
+              max={200}
+              value={scale}
+              onChange={(e) => onChange({ scale: Number(e.target.value) })}
+              className="w-full accent-primary cursor-pointer"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">
+              Modo de Ajuste a la Resolución
+            </label>
+            <select
+              className="h-8 w-full border border-input bg-background px-2 text-xs rounded"
+              value={fit}
+              onChange={(e) => onChange({ fit: e.target.value as "cover" | "contain" })}
+            >
+              <option value="cover">Llenar toda la pantalla (Cover, recomendado)</option>
+              <option value="contain">Ajustar completo sin recortar (Contain)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DesignPanel() {
   const [config, setConfig] = useState<SiteConfig>(() => getSiteConfig());
   const [saved, setSaved] = useState(false);
@@ -1436,7 +1834,18 @@ function DesignPanel() {
     reader.onload = () => {
       setConfig((prev) => ({
         ...prev,
-        hero: { ...prev.hero, image: reader.result as string },
+        hero: { ...prev.hero, mediaType: "image", image: reader.result as string },
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const uploadHeroVideo = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      setConfig((prev) => ({
+        ...prev,
+        hero: { ...prev.hero, mediaType: "video", videoUrl: reader.result as string },
       }));
     };
     reader.readAsDataURL(file);
@@ -1447,7 +1856,18 @@ function DesignPanel() {
     reader.onload = () => {
       setConfig((prev) => ({
         ...prev,
-        promoBanner: { ...prev.promoBanner, image: reader.result as string },
+        promoBanner: { ...prev.promoBanner, mediaType: "image", image: reader.result as string },
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const uploadPromoVideo = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      setConfig((prev) => ({
+        ...prev,
+        promoBanner: { ...prev.promoBanner, mediaType: "video", videoUrl: reader.result as string },
       }));
     };
     reader.readAsDataURL(file);
@@ -1477,105 +1897,101 @@ function DesignPanel() {
             <Image className="h-5 w-5 text-primary" /> 1. Portada Principal (Fondo de Pantalla &amp; Moto)
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Es la primera sección de impacto que ven tus clientes al entrar a la página.
+            Puedes montar <strong>videos o fotos</strong>, ajustar automáticamente a la resolución o cuadrarlo manualmente deslizándolo hacia arriba, abajo y los lados.
           </p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-          <div className="space-y-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block">
-              Imagen de fondo actual
-            </span>
-            <div className="relative aspect-video w-full overflow-hidden border bg-ink rounded">
-              <img
-                src={config.hero.image}
-                alt="Vista previa fondo hero"
-                className="h-full w-full object-cover"
-              />
-            </div>
-            <label className="flex cursor-pointer items-center justify-center gap-2 border py-2 text-xs font-medium hover:bg-ink hover:text-ink-foreground transition-colors">
-              <Upload className="h-3.5 w-3.5" /> Subir nueva foto de fondo
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && uploadHeroImage(e.target.files[0])}
-              />
-            </label>
-            <p className="text-[11px] text-muted-foreground text-center">
-              Recomendado: imagen horizontal de alta resolución
-            </p>
-          </div>
+        <BannerMediaAdjuster
+          label="Fondo de la Portada Principal"
+          mediaType={config.hero.mediaType || "image"}
+          image={config.hero.image}
+          videoUrl={config.hero.videoUrl}
+          posX={config.hero.posX ?? 50}
+          posY={config.hero.posY ?? 50}
+          scale={config.hero.scale ?? 100}
+          fit={config.hero.fit || "cover"}
+          onChange={(updates) =>
+            setConfig((prev) => ({
+              ...prev,
+              hero: {
+                ...prev.hero,
+                ...updates,
+                image: updates.image ?? prev.hero.image,
+              },
+            }))
+          }
+          onUploadImage={uploadHeroImage}
+          onUploadVideo={uploadHeroVideo}
+        />
 
-          <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 pt-2 border-t">
+          <label className="text-xs font-medium">
+            Etiqueta superior pequeña
+            <input
+              className={inputCls}
+              value={config.hero.badge}
+              onChange={(e) =>
+                setConfig({ ...config, hero: { ...config.hero, badge: e.target.value } })
+              }
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-2">
             <label className="text-xs font-medium">
-              Etiqueta superior pequeña
+              Título blanco
               <input
                 className={inputCls}
-                value={config.hero.badge}
+                value={config.hero.title}
                 onChange={(e) =>
-                  setConfig({ ...config, hero: { ...config.hero, badge: e.target.value } })
+                  setConfig({ ...config, hero: { ...config.hero, title: e.target.value } })
                 }
               />
             </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs font-medium">
-                Título blanco
-                <input
-                  className={inputCls}
-                  value={config.hero.title}
-                  onChange={(e) =>
-                    setConfig({ ...config, hero: { ...config.hero, title: e.target.value } })
-                  }
-                />
-              </label>
-              <label className="text-xs font-medium">
-                Palabra roja destacada
-                <input
-                  className={inputCls}
-                  value={config.hero.highlight}
-                  onChange={(e) =>
-                    setConfig({ ...config, hero: { ...config.hero, highlight: e.target.value } })
-                  }
-                />
-              </label>
-            </div>
-
-            <label className="text-xs font-medium sm:col-span-2">
-              Descripción o frase llamativa
-              <textarea
-                rows={3}
-                className="w-full border border-input bg-background p-3 outline-none focus:border-primary text-sm"
-                value={config.hero.description}
-                onChange={(e) =>
-                  setConfig({ ...config, hero: { ...config.hero, description: e.target.value } })
-                }
-              />
-            </label>
-
             <label className="text-xs font-medium">
-              Texto Botón 1 (Tienda)
+              Palabra roja destacada
               <input
                 className={inputCls}
-                value={config.hero.btn1Text}
+                value={config.hero.highlight}
                 onChange={(e) =>
-                  setConfig({ ...config, hero: { ...config.hero, btn1Text: e.target.value } })
-                }
-              />
-            </label>
-
-            <label className="text-xs font-medium">
-              Texto Botón 2 (WhatsApp)
-              <input
-                className={inputCls}
-                value={config.hero.btn2Text}
-                onChange={(e) =>
-                  setConfig({ ...config, hero: { ...config.hero, btn2Text: e.target.value } })
+                  setConfig({ ...config, hero: { ...config.hero, highlight: e.target.value } })
                 }
               />
             </label>
           </div>
+
+          <label className="text-xs font-medium sm:col-span-2">
+            Descripción o frase llamativa
+            <textarea
+              rows={3}
+              className="w-full border border-input bg-background p-3 outline-none focus:border-primary text-sm"
+              value={config.hero.description}
+              onChange={(e) =>
+                setConfig({ ...config, hero: { ...config.hero, description: e.target.value } })
+              }
+            />
+          </label>
+
+          <label className="text-xs font-medium">
+            Texto Botón 1 (Tienda)
+            <input
+              className={inputCls}
+              value={config.hero.btn1Text}
+              onChange={(e) =>
+                setConfig({ ...config, hero: { ...config.hero, btn1Text: e.target.value } })
+              }
+            />
+          </label>
+
+          <label className="text-xs font-medium">
+            Texto Botón 2 (WhatsApp)
+            <input
+              className={inputCls}
+              value={config.hero.btn2Text}
+              onChange={(e) =>
+                setConfig({ ...config, hero: { ...config.hero, btn2Text: e.target.value } })
+              }
+            />
+          </label>
         </div>
       </div>
 
@@ -1586,105 +2002,104 @@ function DesignPanel() {
             <LayoutTemplate className="h-5 w-5 text-primary" /> 2. Banner Intermedio Promocional («Limpia, lubrica y protege»)
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Banner grande ubicado en la parte media de la página principal.
+            Sube video o imagen y ajusta el encuadre horizontal y vertical para que se vea nítido en cualquier resolución.
           </p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-          <div className="space-y-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block">
-              Imagen del banner
-            </span>
-            <div className="relative aspect-video w-full overflow-hidden border bg-ink rounded">
-              <img
-                src={config.promoBanner.image}
-                alt="Vista previa banner intermedio"
-                className="h-full w-full object-cover"
-              />
-            </div>
-            <label className="flex cursor-pointer items-center justify-center gap-2 border py-2 text-xs font-medium hover:bg-ink hover:text-ink-foreground transition-colors">
-              <Upload className="h-3.5 w-3.5" /> Subir nueva foto para este banner
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && uploadPromoImage(e.target.files[0])}
-              />
-            </label>
-          </div>
+        <BannerMediaAdjuster
+          label="Fondo del Banner Promocional"
+          mediaType={config.promoBanner.mediaType || "image"}
+          image={config.promoBanner.image}
+          videoUrl={config.promoBanner.videoUrl}
+          posX={config.promoBanner.posX ?? 50}
+          posY={config.promoBanner.posY ?? 50}
+          scale={config.promoBanner.scale ?? 100}
+          fit={config.promoBanner.fit || "cover"}
+          onChange={(updates) =>
+            setConfig((prev) => ({
+              ...prev,
+              promoBanner: {
+                ...prev.promoBanner,
+                ...updates,
+                image: updates.image ?? prev.promoBanner.image,
+              },
+            }))
+          }
+          onUploadImage={uploadPromoImage}
+          onUploadVideo={uploadPromoVideo}
+        />
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            <label className="text-xs font-medium">
-              Línea 1 del título
-              <input
-                className={inputCls}
-                value={config.promoBanner.line1}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    promoBanner: { ...config.promoBanner, line1: e.target.value },
-                  })
-                }
-              />
-            </label>
+        <div className="grid gap-4 sm:grid-cols-3 pt-2 border-t">
+          <label className="text-xs font-medium">
+            Línea 1 del título
+            <input
+              className={inputCls}
+              value={config.promoBanner.line1}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  promoBanner: { ...config.promoBanner, line1: e.target.value },
+                })
+              }
+            />
+          </label>
 
-            <label className="text-xs font-medium">
-              Línea 2 del título
-              <input
-                className={inputCls}
-                value={config.promoBanner.line2}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    promoBanner: { ...config.promoBanner, line2: e.target.value },
-                  })
-                }
-              />
-            </label>
+          <label className="text-xs font-medium">
+            Línea 2 del título
+            <input
+              className={inputCls}
+              value={config.promoBanner.line2}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  promoBanner: { ...config.promoBanner, line2: e.target.value },
+                })
+              }
+            />
+          </label>
 
-            <label className="text-xs font-medium">
-              Palabra roja destacada
-              <input
-                className={inputCls}
-                value={config.promoBanner.highlight}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    promoBanner: { ...config.promoBanner, highlight: e.target.value },
-                  })
-                }
-              />
-            </label>
+          <label className="text-xs font-medium">
+            Palabra roja destacada
+            <input
+              className={inputCls}
+              value={config.promoBanner.highlight}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  promoBanner: { ...config.promoBanner, highlight: e.target.value },
+                })
+              }
+            />
+          </label>
 
-            <label className="text-xs font-medium sm:col-span-2">
-              Descripción del banner
-              <textarea
-                rows={2}
-                className="w-full border border-input bg-background p-3 outline-none focus:border-primary text-sm"
-                value={config.promoBanner.description}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    promoBanner: { ...config.promoBanner, description: e.target.value },
-                  })
-                }
-              />
-            </label>
+          <label className="text-xs font-medium sm:col-span-2">
+            Descripción del banner
+            <textarea
+              rows={2}
+              className="w-full border border-input bg-background p-3 outline-none focus:border-primary text-sm"
+              value={config.promoBanner.description}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  promoBanner: { ...config.promoBanner, description: e.target.value },
+                })
+              }
+            />
+          </label>
 
-            <label className="text-xs font-medium">
-              Texto del Botón
-              <input
-                className={inputCls}
-                value={config.promoBanner.btnText}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    promoBanner: { ...config.promoBanner, btnText: e.target.value },
-                  })
-                }
-              />
-            </label>
-          </div>
+          <label className="text-xs font-medium">
+            Texto del Botón
+            <input
+              className={inputCls}
+              value={config.promoBanner.btnText}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  promoBanner: { ...config.promoBanner, btnText: e.target.value },
+                })
+              }
+            />
+          </label>
         </div>
       </div>
 
